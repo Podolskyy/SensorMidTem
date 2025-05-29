@@ -1,44 +1,48 @@
-#include "wifi_utils.h"
-#include "eeprom_utils.h"
-#include "web_server.h"
-#include "dht_utils.h"
-#include "relay_utils.h"
-#include "display_utils.h"
-#include <HTTPClient.h>
+// Include custom utility libraries
+#include "wifi_utils.h"       // WiFi connection and AP mode utilities
+#include "eeprom_utils.h"     // Reading WiFi credentials from EEPROM
+#include "web_server.h"       // Web server for AP fallback configuration
+#include "dht_utils.h"        // Reading from DHT sensor
+#include "relay_utils.h"      // Relay control functions
+#include "display_utils.h"    // OLED display handling
+#include <HTTPClient.h>       // For sending HTTP requests
 
-const char* serverEndpoint = "http://192.168.1.3:8080/backend/insert_data.php";  // Replace with your real PHP endpoint
+// Backend endpoint to send sensor data
+const char* serverEndpoint = "http://192.168.1.3:8080/backend/insert_data.php";
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);  // Start serial communication for debugging
 
-  initDisplay();
-  initDHT();
-  initRelays();
-  readCredentialsFromEEPROM();
+  initDisplay();         // Initialize OLED display
+  initDHT();             // Initialize DHT sensor
+  initRelays();          // Set relay pins as output
+  readCredentialsFromEEPROM(); // Load saved WiFi credentials
 
+  // Attempt to connect to WiFi
   if (!connectToWiFi()) {
-    launchWebServer();  // fallback to AP config mode
+    launchWebServer();   // Launch AP mode if WiFi fails
     return;
   }
 
-  showStartupScreen();
+  showStartupScreen();   // Show a startup screen on OLED
 }
 
 void loop() {
+  // Read temperature and humidity from DHT sensor
   float temp = readTemperature();
   float hum = readHumidity();
-  temp=temp+15;
-  hum=hum-50;
+
+  // Check if readings are outside the acceptable range
   bool tempAbnormal = (temp < 22.0 || temp > 36.0);
   bool humAbnormal = (hum < 50.0 || hum > 95.0);
-  
 
+  // Turn on relays if abnormal values are detected
   if (tempAbnormal || humAbnormal) {
     relay1On();
     relay2On();
   }
 
-  // Determine status message
+  // Prepare status message based on abnormal readings
   String status;
   if (tempAbnormal && humAbnormal)
     status = "Temp & Hum Abnormal";
@@ -49,31 +53,32 @@ void loop() {
   else
     status = "Normal";
 
-  // Send to server via HTTP POST
+  // Prepare and send HTTP POST request to backend
   HTTPClient http;
   http.begin(serverEndpoint);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
+  // Format the data for sending
   String postData = "temperature=" + String(temp) + "&humidity=" + String(hum);
-  int responseCode = http.POST(postData);
+  int responseCode = http.POST(postData); // Send POST request
 
+  // Log the result
   if (responseCode > 0) {
     Serial.println("Data sent successfully: " + http.getString());
   } else {
     Serial.println("Failed to send data. HTTP Error: " + String(responseCode));
   }
-  http.end();
-  tempAbnormal = true;
-  // Activate relay if abnormal
+  http.end(); // Close the connection
 
-  // Countdown on OLED
+  // Countdown with OLED updates every second
   for (int i = 10; i > 0; i--) {
     updateDisplay("Data in " + String(i) + " sec",
                   "Current: " + status,
                   String(temp) + " C, " + String(hum) + " %");
-    delay(1000);
+    delay(1000); // Wait 1 second
   }
 
+  // Turn off relays after delay (if they were turned on)
   if (tempAbnormal || humAbnormal) {
     relay1Off();
     relay2Off();
